@@ -1,10 +1,11 @@
 extern crate anyhow;
-
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Formatter};
 use std::ops::BitOrAssign;
 use anyhow::Result;
 use std::io::Write;
+use std::mem::take;
+
 #[derive(Clone,Copy,PartialEq,Eq,PartialOrd,Ord,Hash)]
 struct WordBitmap(u32);
 impl WordBitmap {
@@ -13,9 +14,6 @@ impl WordBitmap {
     }
     fn remove(&mut self, other: WordBitmap) {
         self.0 &= !other.0;
-    }
-    fn has_used_all_letters(self) -> bool {
-        self.0 == (1<<25)-1
     }
     fn letters_used(self) -> u32 {
         self.0.count_ones()
@@ -55,6 +53,9 @@ fn main() -> Result<()> {
             }
             bitmap |= mask;
         }
+        if bitmap.count_ones()!=5 {
+            return None;
+        }
         if bitmap==0 {
             return None;
         }
@@ -79,21 +80,26 @@ fn main() -> Result<()> {
 
     let num_words = word_list.len();
 
-    let mut dead_ends = HashSet::new();
+    let mut dead_ends:HashSet<WordBitmap> = HashSet::new();
     println!("Num words: {}",num_words);
     let mut explored = vec![0usize,0usize,0usize,0usize,0usize];
+    let mut had_solution = 0u32;
     let mut cur_used_letters = WordBitmap(0);
     let mut depth = 0;
     let mut solutions_found = 0;
     let mut dead_ends_eliminated = 0;
     let mut solprint = std::fs::File::create("solutions.txt").unwrap();
+
+
     'outer: loop {
-        if depth <= 1 {
-            dbg!(&explored,&cur_used_letters,&depth,dead_ends_eliminated,solutions_found);
+        if depth <= 0 {
+            dbg!(&explored,&cur_used_letters,&depth,dead_ends_eliminated,solutions_found, dead_ends.len());
             println!("--------------");
         }
-        for (index,word) in word_list.iter().copied().enumerate().skip(explored[depth]+1) {
+
+        for (index,word) in word_list.iter().copied().enumerate().skip(explored[depth]) {
             if !cur_used_letters.overlaps(word) {
+
                 let mut cand_cur_used_letters = cur_used_letters;
                 cand_cur_used_letters|=word;
 
@@ -104,24 +110,41 @@ fn main() -> Result<()> {
                 }
 
                 cur_used_letters=cand_cur_used_letters;
-                explored[depth]=index;
+                explored[depth]=index+1;
                 depth+=1;
                 //println!("Chose word {:?}",word);
                 if depth==5 {
                     if cur_used_letters.letters_used()==25 {
-                        println!("Found solution: (using letters: {:?})", cur_used_letters);
+                        //println!("Found solution: (using letters: {:?})", cur_used_letters);
+                        let mut variations:Vec<Vec<&str>> = vec![vec![]];
                         for exp in explored.iter().copied() {
-                            write!(solprint,"{:?} ", anagrams[&word_list[exp]]);
+                            let mut next = take(&mut variations);
+                            for anagram in &anagrams[&word_list[exp-1]] {
+                                for item in next.iter() {
+                                    let mut temp=item.clone();
+                                    temp.push(anagram);
+                                    variations.push(temp);
+                                }
+                            }
                         }
-                        writeln!(solprint,"");
-                        solutions_found+=1;
+                        for variation in &variations {
+                            for word in variation {
+                                write!(solprint,"{:?}\t", word);
+                            }
+                            writeln!(solprint,"");
+                        }
+                        solutions_found += variations.len();
+                        had_solution|=31;
                         //break 'outer;
                     }
+
                     depth -= 1;
                     cur_used_letters.remove(word);
                     continue;
                 }
-                explored[depth]=index;
+
+
+                explored[depth]=index+1;
                 continue 'outer;
             }
         }
@@ -131,16 +154,20 @@ fn main() -> Result<()> {
         // We insert this to the dead-end set
         // We must back up the search tree.
         //println!("Marking dead-end: {:?}", cur_used_letters);
-        dead_ends.insert(cur_used_letters);
+        if had_solution==0
+        {
+            dead_ends.insert(cur_used_letters);
+        }
+
         if depth == 0 {
             println!("Search complete. Found {} solutions", solutions_found);
             break 'outer;
         }
+        had_solution&=!(1<<depth);
         depth-=1;
-        let unusable_word = explored[depth];
+        let unusable_word = explored[depth]-1;
         //println!("Unchose word {:?}",word_list[unusable_word]);
         cur_used_letters.remove(word_list[unusable_word]);
-
 
 
 
