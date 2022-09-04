@@ -17,6 +17,8 @@ To use it:
 
 On my computer, the runtime varies, but the fastest runs complete in under one second (on an AMD 5950X).
 
+
+Output:
 ```
 
 Search complete. Found 831 solutions. See file solutions.txt.
