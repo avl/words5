@@ -8,3 +8,5 @@ edition = "2021"
 [dependencies]
 anyhow="1.0"
 indexmap="1.9"
+rayon="1.5"
+parking_lot = "0.12"
