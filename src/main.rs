@@ -1,10 +1,13 @@
 extern crate anyhow;
+extern crate indexmap;
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Formatter};
 use std::ops::BitOrAssign;
 use anyhow::Result;
 use std::io::Write;
 use std::mem::take;
+use std::rc::Rc;
+use indexmap::IndexSet;
 
 #[derive(Clone,Copy,PartialEq,Eq,PartialOrd,Ord,Hash)]
 struct WordBitmap(u32);
@@ -76,76 +79,139 @@ fn main() -> Result<()> {
 
 
 
+    word_list.sort();
     let word_list = word_list;
 
     let num_words = word_list.len();
 
-    let mut dead_ends:HashSet<WordBitmap> = HashSet::new();
+    //let mut dead_ends:HashSet<WordBitmap> = HashSet::new();
     println!("Num words: {}",num_words);
     let mut explored = vec![0usize,0usize,0usize,0usize,0usize];
     let mut had_solution = 0u32;
     let mut cur_used_letters = WordBitmap(0);
     let mut depth = 0;
     let mut solutions_found = 0;
-    let mut dead_ends_eliminated = 0;
+    //let mut dead_ends_eliminated = 0;
     let mut solprint = std::fs::File::create("solutions.txt").unwrap();
 
-
-    'outer: loop {
-        if depth <= 0 {
-            dbg!(&explored,&cur_used_letters,&depth,dead_ends_eliminated,solutions_found, dead_ends.len());
-            println!("--------------");
+    let mut available_words_for_letters:HashMap<WordBitmap,Rc<Vec<WordBitmap>>> = HashMap::new();
+    /*
+    for used_letter_set in 0u32..(1<<26) {
+        if used_letter_set%(1<<20)==0 {
+            println!("{} / {}", used_letter_set, 1<<26);
         }
 
-        for (index,word) in word_list.iter().copied().enumerate().skip(explored[depth]) {
-            if !cur_used_letters.overlaps(word) {
+        let used_letter_set = WordBitmap(used_letter_set);
+        let num_letters = used_letter_set.letters_used();
+        if num_letters>=15 && num_letters%5==0 {
+            //let unused_letters = ((!c)&((1<<26)-1));
+            let mut sublist = available_words_for_letters.entry(used_letter_set).or_insert_with(||Rc::new(Vec::new()));
+            for word in word_list.iter() {
+                if word.overlaps(used_letter_set)==false {
+                    sublist.push(*word);
+                }
+            }
+        }
+    }
+*/
+    fn get_possible_words<'a>(cache: &'a mut HashMap<WordBitmap,Rc<Vec<WordBitmap>>>, used_letters: WordBitmap, all_words: &[WordBitmap]) -> Rc<Vec<WordBitmap>> {
+        cache.entry(used_letters).or_insert_with(move||{
+            let mut temp = vec![];
+            for word in all_words {
+                if !used_letters.overlaps(*word)
+                {
+                    temp.push(*word);
+                }
+            }
+
+            Rc::new(temp)
+        }).clone()
+    }
+
+    println!("Precalc done!");
+
+    let mut used_letters_stack = [WordBitmap(0),WordBitmap(0),WordBitmap(0),WordBitmap(0),WordBitmap(0)];
+
+    let mut dead_ends_candidates = IndexSet::new();
+    let mut dead_ends = HashSet::new();
+    let mut word_stack = [WordBitmap(0xffff_ffff),WordBitmap(0),WordBitmap(0),WordBitmap(0),WordBitmap(0),WordBitmap(0)];
+
+    let mut solutionless = true;
+    'outer: loop {
+        let mut dbg = false;
+        if depth <= 0 && explored[0]%100==0/* || explored[0]>=5976*/{
+            dbg!(&explored,&cur_used_letters,&depth,solutions_found,dead_ends.len());
+            println!("--------------");
+            dbg = true;
+        }
+
+        //for (index,word) in word_list.iter().copied().enumerate().skip(explored[depth]) {
+        let curwordlist = get_possible_words(&mut available_words_for_letters, cur_used_letters,&word_list);
+        used_letters_stack[depth] = cur_used_letters;
+
+        if dbg {
+            println!("Given {:?} letters used, words are: {:?}. Indexing at {} ", cur_used_letters, curwordlist.len(), explored[depth]);
+        }
+        //
+        for (index,word) in curwordlist.iter().copied().enumerate().skip(explored[depth]){//.iter().copied().enumerate().skip(explored[depth]) {
+            if word<word_stack[depth] {
 
                 let mut cand_cur_used_letters = cur_used_letters;
                 cand_cur_used_letters|=word;
 
-                if dead_ends.contains(&cand_cur_used_letters){
+                if dead_ends.contains(&cand_cur_used_letters) {
+                    continue;
+                }
+
+                /*if dead_ends.contains(&cand_cur_used_letters){
                     //println!("Visited dead-end at depth {}: {:?}", depth,cand_cur_used_letters);
                     dead_ends_eliminated+=1;
                     continue; //this is a dead end, don't explore further
-                }
+                }*/
 
                 cur_used_letters=cand_cur_used_letters;
                 explored[depth]=index+1;
+                word_stack[depth+1] = word;
                 depth+=1;
                 //println!("Chose word {:?}",word);
                 if depth==5 {
-                    if cur_used_letters.letters_used()==25 {
-                        //println!("Found solution: (using letters: {:?})", cur_used_letters);
-                        let mut variations:Vec<Vec<&str>> = vec![vec![]];
-                        for exp in explored.iter().copied() {
-                            let mut next = take(&mut variations);
-                            for anagram in &anagrams[&word_list[exp-1]] {
-                                for item in next.iter() {
-                                    let mut temp=item.clone();
-                                    temp.push(anagram);
-                                    variations.push(temp);
-                                }
+
+                    solutionless = false;
+                    //println!("Found solution: (using letters: {:?})", cur_used_letters);
+                    let mut variations:Vec<Vec<&str>> = vec![vec![]];
+                    for word in word_stack.iter().skip(1).copied() {
+                        let mut next = take(&mut variations);
+                        for anagram in &anagrams[&word] {
+                            for item in next.iter() {
+                                let mut temp=item.clone();
+                                temp.push(anagram);
+                                variations.push(temp);
                             }
                         }
-                        for variation in &variations {
-                            for word in variation {
-                                write!(solprint,"{:?}\t", word);
-                            }
-                            writeln!(solprint,"");
-                        }
-                        solutions_found += variations.len();
-                        had_solution|=31;
-                        //break 'outer;
                     }
+                    for variation in &variations {
+                        for word in variation {
+                            write!(solprint,"{:?}\t", word).unwrap();
+                        }
+                        writeln!(solprint,"").unwrap();
+                    }
+                    solutions_found += variations.len();
+                    had_solution|=31;
+                    //break 'outer;
 
                     depth -= 1;
                     cur_used_letters.remove(word);
                     continue;
                 }
 
+                if dbg {
+                    println!("Dive deeper");
+                }
 
-                explored[depth]=index+1;
+                explored[depth]=0;//index+1;
                 continue 'outer;
+            } else {
+                break;
             }
         }
 
@@ -156,7 +222,14 @@ fn main() -> Result<()> {
         //println!("Marking dead-end: {:?}", cur_used_letters);
         if had_solution==0
         {
-            dead_ends.insert(cur_used_letters);
+            //dead_ends.insert(cur_used_letters);
+        }
+        if dbg {
+            println!("Fell through on level {}", depth);
+        }
+
+        if solutionless {
+            dead_ends_candidates.insert(cur_used_letters);
         }
 
         if depth == 0 {
@@ -166,9 +239,16 @@ fn main() -> Result<()> {
         had_solution&=!(1<<depth);
         depth-=1;
         let unusable_word = explored[depth]-1;
-        //println!("Unchose word {:?}",word_list[unusable_word]);
-        cur_used_letters.remove(word_list[unusable_word]);
 
+        let curwordlist = get_possible_words(&mut available_words_for_letters, used_letters_stack[depth], &word_list);
+        cur_used_letters.remove(curwordlist[unusable_word]);
+        if depth==0 {
+            if solutionless {
+                dead_ends.extend(take(&mut dead_ends_candidates));
+            }
+            dead_ends_candidates.clear();
+            solutionless = true;
+        }
 
 
 
