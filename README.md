@@ -15,7 +15,7 @@ To use it:
 
 3: Run the project like this ```time RUSTFLAGS='-C target-cpu=native' cargo run```
 
-On my computer, the runtime varies, but the fastest runs complete in under one second.
+On my computer, the runtime varies, but the fastest runs complete in under one second (on an AMD 5950X).
 
 ```
 
